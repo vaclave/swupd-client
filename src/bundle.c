@@ -56,7 +56,7 @@ int list_installable_bundles()
 	}
 
 	mix_exists = (check_mix_exists() & system_on_mix());
-	MoM = load_mom(current_version, false, mix_exists, NULL);
+	MoM = load_mom(current_version, false, mix_exists, NULL, false);
 	if (!MoM) {
 		return EMOM_LOAD;
 	}
@@ -87,7 +87,7 @@ static int load_bundle_manifest(const char *bundle_name, struct list *subs, int 
 
 	*submanifest = NULL;
 
-	mom = load_mom(version, false, false, NULL);
+	mom = load_mom(version, false, false, NULL, false);
 	if (!mom) {
 		return EMOM_LOAD;
 	}
@@ -203,7 +203,7 @@ int show_included_bundles(char *bundle_name)
 		goto out;
 	}
 
-	mom = load_mom(current_version, false, false, NULL);
+	mom = load_mom(current_version, false, false, NULL, false);
 	if (!mom) {
 		fprintf(stderr, "Cannot load official manifest MoM for version %i\n", current_version);
 		ret = EMOM_LOAD;
@@ -301,7 +301,7 @@ int show_bundle_reqd_by(const char *bundle_name, bool server)
 		goto out;
 	}
 
-	current_manifest = load_mom(version, server, false, NULL);
+	current_manifest = load_mom(version, server, false, NULL, false);
 	if (!current_manifest) {
 		fprintf(stderr, "Unable to download/verify %d Manifest.MoM\n", version);
 		ret = EMOM_LOAD;
@@ -540,7 +540,7 @@ int remove_bundles(char **bundles)
 			fprintf(stderr, "Removing bundle: %s\n", bundle);
 		}
 
-		current_mom = load_mom(current_version, false, mix_exists, NULL);
+		current_mom = load_mom(current_version, false, mix_exists, NULL, false);
 		if (!current_mom) {
 			fprintf(stderr, "Unable to download/verify %d Manifest.MoM\n", current_version);
 			ret = EMOM_LOAD;
@@ -1048,7 +1048,7 @@ int install_bundles_frontend(char **bundles)
 
 	mix_exists = (check_mix_exists() & system_on_mix());
 
-	mom = load_mom(current_version, false, mix_exists, NULL);
+	mom = load_mom(current_version, false, mix_exists, NULL, false);
 	if (!mom) {
 		fprintf(stderr, "Cannot load official manifest MoM for version %i\n", current_version);
 		ret = EMOM_LOAD;
