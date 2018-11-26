@@ -355,7 +355,7 @@ extern bool on_new_format(void);
 struct list *free_list_file(struct list *item);
 struct list *free_bundle(struct list *item);
 extern void create_and_append_subscription(struct list **subs, const char *component);
-extern void filter_update_subscriptions(struct manifest *server_manifest, struct list *current_subs, int current_version, struct list **update_subs, struct list **nonupdate_subs);
+extern int filter_update_subscriptions(struct manifest *server_manifest, struct list *current_subs, int current_version, struct list **update_subs, struct list **nonupdate_subs);
 
 /* bundle.c */
 extern bool is_tracked_bundle(const char *bundle_name);
