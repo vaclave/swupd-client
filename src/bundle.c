@@ -22,6 +22,8 @@
 */
 
 #define _GNU_SOURCE
+#include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <libgen.h>
 #include <stdbool.h>
@@ -1019,6 +1021,43 @@ out:
 	return ret;
 }
 
+static int lex_sort(const void *a, const void *b)
+{
+	const char *name1 = (char *)a;
+	const char *name2 = (char *)b;
+	return strcmp(name1, name2);
+}
+
+/* Get a list of files in a directory sorted by filename
+ * with their fullpath, returns NULL on error (errno set by
+ * opendir).
+ */
+static struct list *get_dir_files_sorted(char *path)
+{
+        DIR *dir = NULL;
+        struct dirent *ent = NULL;
+        struct list *files = NULL;
+
+        dir = opendir(path);
+        if (!dir) {
+                /* caller should use errno for detecting issues */
+                return NULL;
+        }
+
+        while ((ent = readdir(dir))) {
+                char *name = NULL;
+                if (ent->d_name[0] == '.') {
+                        continue;
+                }
+                string_or_die(&name, "%s/%s", path, ent->d_name);
+                files = list_prepend_data(files, name);
+        }
+
+        closedir(dir);
+
+        return list_sort(files, lex_sort);
+}
+
 /* Bundle install one ore more bundles passed in bundles
  * param as a null terminated array of strings
  */
@@ -1094,13 +1133,6 @@ clean_and_exit:
 	return ret;
 }
 
-static int lex_sort(const void *a, const void *b)
-{
-	const char *name1 = (char *)a;
-	const char *name2 = (char *)b;
-	return strcmp(name1, name2);
-}
-
 /*
  * This function will read the BUNDLES_DIR (by default
  * /usr/share/clear/bundles/), get the list of local bundles and print
@@ -1109,35 +1141,23 @@ static int lex_sort(const void *a, const void *b)
 int list_local_bundles()
 {
 	char *path = NULL;
-	DIR *dir;
-	struct dirent *ent;
 	struct list *bundles = NULL;
 	struct list *item = NULL;
 
 	string_or_die(&path, "%s/%s", path_prefix, BUNDLES_DIR);
 
-	dir = opendir(path);
-	if (!dir) {
+        errno = 0;
+        bundles = get_dir_files_sorted(path);
+	if (errno) {
 		perror("couldn't open bundles directory");
 		free_string(&path);
 		return EXIT_FAILURE;
 	}
-	while ((ent = readdir(dir))) {
-		if (ent->d_name[0] == '.') {
-			continue;
-		}
-		/* Need to dup the strings as the directory
-		 * may be bigger than the size of the I/O buffer */
-		char *name = strdup_or_die(ent->d_name);
-		bundles = list_append_data(bundles, name);
-	}
 
-	closedir(dir);
-
-	item = bundles = list_sort(bundles, lex_sort);
+	item = bundles;
 
 	while (item) {
-		printf("%s\n", (char *)item->data);
+		printf("%s\n", basename((char *)item->data));
 		free(item->data);
 		item = item->next;
 	}
