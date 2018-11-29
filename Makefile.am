@@ -112,6 +112,7 @@ TESTS = $(dist_check_SCRIPTS)
 
 BATS = \
 	test/documentation/manpages/test.bats \
+	test/functional/bundleadd/add-alias-basic.bats \
 	test/functional/bundleadd/add-bad-hash.bats \
 	test/functional/bundleadd/add-bad-hash-state.bats \
 	test/functional/bundleadd/add-bad-manifest.bats \

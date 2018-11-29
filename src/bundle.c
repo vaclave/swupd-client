@@ -1058,6 +1058,177 @@ static struct list *get_dir_files_sorted(char *path)
         return list_sort(files, lex_sort);
 }
 
+struct alias_lookup {
+	char *alias;
+	struct list *bundles;
+};
+
+/* Deep free on alias_lookup structs
+ */
+static void free_alias_lookup(void *lookup)
+{
+        struct alias_lookup *l = (struct alias_lookup *)lookup;
+        free(l->alias);
+        list_free_list_and_data(l->bundles, free);
+}
+
+/* Get bundles for a given alias but if the alias is
+ * not actually an alias, return a list with just the
+ * bundle name
+ */
+static struct list *get_alias_bundles(struct list *alias_definitions, char *alias)
+{
+        struct list *bundles = NULL;
+        struct list *iter = alias_definitions;
+
+        while (iter) {
+                struct alias_lookup *lookup = (struct alias_lookup *)iter->data;
+                iter = iter->next;
+                if (strcmp(lookup->alias, alias) == 0) {
+                        bundles = list_deep_clone_strs(lookup->bundles);
+                        break;
+                }
+        }
+        if (!bundles) {
+                bundles = list_prepend_data(bundles, strdup_or_die(alias));
+        }
+
+        return bundles;
+}
+
+/* Parse an alias definition file for a list of bundles
+ * it specifies
+ */
+static struct list *parse_alias_file(char *fullpath)
+{
+	FILE *afile = NULL;
+	struct list *alias_content = NULL;
+	char *line = NULL;
+	size_t len = 0;
+	ssize_t read = -1;
+
+	afile = fopen(fullpath, "r");
+	if (!afile) {
+		return NULL;
+	}
+
+	while ((read = getline(&line, &len, afile)) != -1) {
+		struct alias_lookup *l = NULL;
+		char *c = NULL;
+
+		/* get the alias but ignore lines without bundles */
+		c = strchr(line, '\t');
+		if (!c) {
+			continue;
+		}
+
+		/* strip the newline if it exists */
+		if (line[read - 1] == '\n') {
+			line[read - 1] = 0;
+		}
+
+		*c = 0;
+		c++;
+
+		l = calloc(1, sizeof(struct alias_lookup));
+		ON_NULL_ABORT(l);
+
+		/* get the bundles associated with the alias
+                 * note a file with multiple copies of the same
+                 * alias will be first alias defintion wins */
+		while (c && *c) {
+			char *next = strchr(c, '\t');
+			char *bundle = NULL;
+			/* two tabs in a row, skip */
+			if (c == next) {
+				c++;
+				continue;
+			}
+			if (next) {
+				*next = 0;
+				next++;
+			}
+			bundle = strdup_or_die(c);
+			l->bundles = list_prepend_data(l->bundles, bundle);
+			c = next;
+		}
+		if (!l->bundles) {
+			free(l);
+			continue;
+		}
+		l->alias = strdup_or_die(line);
+		alias_content = list_prepend_data(alias_content, l);
+	}
+
+	fclose(afile);
+	if (line) {
+		free(line);
+	}
+	return alias_content;
+}
+
+/* Get alias definitions using both system and user
+ * alias definition files
+ */
+static struct list *get_alias_definitions()
+{
+        char *path = NULL;
+        struct list *combined = NULL;
+        struct list *definitions = NULL;
+        struct list *iters = NULL;
+        struct list *iteru = NULL;
+        struct list *system_alias_files = NULL;
+        struct list *user_alias_files = NULL;
+
+	/* get sorted system and user filenames */
+        string_or_die(&path, "%s/%s", path_prefix, SYSTEM_ALIAS_PATH);
+        system_alias_files = get_dir_files_sorted(path);
+        free(path);
+
+        string_or_die(&path, "%s/%s", path_prefix, USER_ALIAS_PATH);
+        user_alias_files = get_dir_files_sorted(path);
+        free(path);
+
+        /* get a combined list with user files overriding system files */
+        iters = system_alias_files;
+        iteru = user_alias_files;
+        while (iters && iteru) {
+                int pivot = strcmp(basename(iteru->data), basename(iters->data));
+                if (pivot == 0) {
+                        if (iters == system_alias_files) {
+                                system_alias_files = iters->next;
+                        }
+                        iters = list_free_item(iters, free);
+
+                        combined = list_prepend_data(combined, iteru->data);
+                        if (iteru == user_alias_files) {
+                                user_alias_files = iteru->next;
+                        }
+                        iteru = list_free_item(iteru, NULL);
+                } else if (pivot < 0) {
+                        iteru = iteru->next;
+                } else {
+                        iters = iters->next;
+                }
+        }
+
+        combined = list_concat(combined, user_alias_files);
+        combined = list_concat(combined, system_alias_files);
+
+	/* read alias definitions */
+        iteru = combined;
+
+        while (iteru) {
+                struct list *defns = NULL;
+                defns = parse_alias_file(iteru->data);
+                iteru = iteru->next;
+                definitions = list_concat(definitions, defns);
+        }
+        list_free_list_and_data(combined, free);
+
+        return definitions;
+}
+
 /* Bundle install one ore more bundles passed in bundles
  * param as a null terminated array of strings
  */
@@ -1065,6 +1236,7 @@ int install_bundles_frontend(char **bundles)
 {
 	int ret = 0;
 	int current_version;
+	struct list *aliases = NULL;
 	struct list *bundles_list = NULL;
 	struct manifest *mom;
 	struct list *subs = NULL;
@@ -1095,22 +1267,28 @@ int install_bundles_frontend(char **bundles)
 	}
 
 	timelist_timer_start(global_times, "Prepend bundles to list");
+	aliases = get_alias_definitions();
 	for (; *bundles; ++bundles) {
-		bundles_list = list_prepend_data(bundles_list, *bundles);
-		if (*bundles) {
+		struct list *alias_bundles = get_alias_bundles(aliases, *bundles);
+		struct list *iter = alias_bundles;
+		while (iter) {
+			char *b = iter->data;
+			iter = iter->next;
 			char *tmp = bundles_list_str;
 			if (bundles_list_str) {
-				string_or_die(&bundles_list_str, "%s, %s", bundles_list_str, *bundles);
+				string_or_die(&bundles_list_str, "%s, %s", bundles_list_str, b);
 			} else {
-				string_or_die(&bundles_list_str, "%s", *bundles);
+				string_or_die(&bundles_list_str, "%s", b);
 			}
 			free_string(&tmp);
 		}
+		bundles_list = list_concat(alias_bundles, bundles_list);
 	}
 	timelist_timer_stop(global_times); // closing: Prepend bundles to list
 	timelist_timer_start(global_times, "Install bundles");
 	ret = install_bundles(bundles_list, &subs, mom);
-	list_free_list(bundles_list);
+	list_free_list_and_data(bundles_list, free); // free the bundles from alias
+	list_free_list_and_data(aliases, free_alias_lookup); // free alias definitions
 	timelist_timer_stop(global_times); // closing: Install bundles
 
 	timelist_print_stats(global_times);
